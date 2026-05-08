@@ -1,9 +1,12 @@
+import os
 import time
 import uuid
+import shutil
 from fastapi import FastAPI, Request, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from src.services.rag_pipeline import chatbot  # Asumsi core logic kamu
+from fastapi import UploadFile, File, Form
 
 app = FastAPI(title="SEJAHE AI Service", version="1.0.0")
 
@@ -47,12 +50,18 @@ async def add_request_id(request: Request, call_next):
 
 @app.post("/api/v1/chatbot/query", response_model=GlobalResponse)
 async def query_chatbot(request: QueryRequest, req_raw: Request):
+    # Konversi image_key menjadi path asli untuk Gemini
+    full_image_path = None
+    if request.image_key:
+        full_image_path = os.path.join("static", request.image_key)
+    
+    # Kirim ke RAG Pipeline
+    ai_result = chatbot(query_text=request.message, image_path=full_image_path)
+
     start_time = time.time()
     req_id = req_raw.headers.get("X-Request-ID", str(uuid.uuid4()))
     
     try:
-        # Panggil otak RAG buatan Maulia
-        # Sesuai kontrak, proses ini harus 2-5 detik [cite: 981]
         ai_result = chatbot(request.message, request.image_key)
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -71,7 +80,6 @@ async def query_chatbot(request: QueryRequest, req_raw: Request):
             ],
             processing_time_ms=processing_time
         )
-
         
         
         # Susun data sesuai model 3.3 dan 6.0 di kontrak [cite: 848, 856]
@@ -99,13 +107,46 @@ async def query_chatbot(request: QueryRequest, req_raw: Request):
         )
 
     except Exception as e:
-        # Error handling sesuai Registry di kontrak (9.1) [cite: 962]
+        # Error handling sesuai Registry di kontrak 
         return GlobalResponse(
             success=False,
             message="Cloud AI service unreachable",
             error={"code": "AI_SERVICE_UNAVAILABLE", "details": str(e)},
             request_id=req_id
         )
+    
+# --- Endpoint: POST /api/v1/chatbot/upload-image ---
+@app.post("/api/v1/chatbot/upload-image", status_code=201)
+async def upload_image(
+    chat_id: int = Form(...), 
+    file: UploadFile = File(...)
+):
+    # Buat folder temporary jika belum ada
+    upload_dir = "static/uploads"
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
+
+    # Buat nama file unik (image_key) 
+    file_extension = file.filename.split(".")[-1]
+    image_key = f"uploads/{int(time.time())}_{uuid.uuid4().hex}.{file_extension}"
+    file_path = os.path.join("static", image_key)
+
+    # Simpan file secara lokal di server
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Response sesuai Global Envelope & Model 3.3 
+    return {
+        "success": True,
+        "data": {
+            "image_key": image_key,
+            "mime_type": file.content_type,
+            "size_bytes": os.path.getsize(file_path),
+            "expires_at": str(time.time() + 10800) # TTL 3 jam [cite: 900]
+        },
+        "message": "Image uploaded successfully",
+        "request_id": str(uuid.uuid4())
+    }
 
 # --- 4. Health Check Endpoint ---
 @app.get("/api/v1/health")
