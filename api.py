@@ -57,21 +57,39 @@ async def query_chatbot(request: QueryRequest, req_raw: Request):
         
         processing_time = int((time.time() - start_time) * 1000)
         
-        # Susun data sesuai model 3.3 dan 6.0 di kontrak [cite: 848, 856]
         data = ChatbotResponseData(
-            user_message_id=int(time.time()), # Dummy ID untuk contoh
+            user_message_id=int(time.time()),
             assistant_message_id=int(time.time()) + 1,
-            response=ai_result["answer"],
+            response=ai_result["response"], # Ambil kunci 'response'
             defect_category=request.defect_category or "Printing Quality",
             rag_context_used=[
                 RAGContext(
                     doc_id=ctx["doc_id"], 
                     title=ctx["title"], 
                     similarity_score=ctx["score"]
-                ) for ctx in ai_result["context"]
+                    ) for ctx in ai_result["context"]
             ],
             processing_time_ms=processing_time
         )
+
+        
+        
+        # Susun data sesuai model 3.3 dan 6.0 di kontrak [cite: 848, 856]
+        
+        # data = ChatbotResponseData(
+        #     user_message_id=int(time.time()), # Dummy ID untuk contoh
+        #     assistant_message_id=int(time.time()) + 1,
+        #     response=ai_result["answer"],
+        #     defect_category=request.defect_category or "Printing Quality",
+        #     rag_context_used=[
+        #         RAGContext(
+        #             doc_id=ctx["doc_id"], 
+        #             title=ctx["title"], 
+        #             similarity_score=ctx["score"]
+        #         ) for ctx in ai_result["context"]
+        #     ],
+        #     processing_time_ms=processing_time
+        # )
         
         return GlobalResponse(
             success=True,
