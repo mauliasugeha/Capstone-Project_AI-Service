@@ -7,39 +7,32 @@ from dotenv import load_dotenv
 # Load environment variable
 load_dotenv()
 
-# Inisialisasi Client menggunakan library terbaru (google-genai)
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def analyze_defect_with_gemini(text_query: str, image_path: str = None, context: str = ""):
     try:
-        # Prompt system
-        prompt = f"""You are an expert EPSON printer technician. Based on the following information, identify any defects or issues:
+        # PROMPT DISESUAIKAN DENGAN API CONTRACT V1.0
+        prompt = f"""Anda adalah expert EPSON printer technician untuk PT. Indonesia Epson Industry.
+Tugas: Berikan solusi teknis yang akurat berdasarkan konteks dan pertanyaan user.
 
 User Description: "{text_query}"
 Knowledge Base Context: "{context}"
 
-Provide your analysis in JSON format (no markdown, just plain JSON):
+Format respons HARUS berupa JSON murni (tanpa markdown) dengan struktur:
 {{
-  "defectDetected": boolean,
-  "defectType": "string",
-  "severity": "string ('low', 'medium', 'high', or 'critical')",
-  "description": "string",
-  "recommendedAction": "string",
-  "confidence": number (0-1)
+  "response": "tuliskan jawaban teknis dan langkah perbaikan di sini secara natural"
 }}"""
 
-        # Siapkan isi pesan
         contents = [prompt]
 
-        # Jika ada gambar, sisipkan ke dalam array contents
         if image_path:
             try:
                 img = Image.open(image_path)
-                contents.insert(0, img)  # Letakkan gambar di urutan pertama
+                contents.insert(0, img)
             except Exception as e:
                 print(f"Error membuka gambar: {e}")
 
-        # Panggil API Gemini dengan format terbaru
+        # Menggunakan model gemini-2.5-flash sesuai log build kamu
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=contents
@@ -47,7 +40,7 @@ Provide your analysis in JSON format (no markdown, just plain JSON):
         
         response_text = response.text
 
-        # Parsing JSON dari respons string
+        # Parsing JSON yang lebih robust
         clean_json_string = response_text.replace("```json", "").replace("```", "").strip()
         analysis_result = json.loads(clean_json_string)
         
@@ -55,11 +48,7 @@ Provide your analysis in JSON format (no markdown, just plain JSON):
 
     except Exception as e:
         print("Error pada Gemini Service:", e)
+        # Fallback sesuai API Contract v1.0 jika terjadi kegagalan AI
         return {
-            "defectDetected": False,
-            "defectType": "unknown",
-            "severity": "low",
-            "description": "Unable to analyze request",
-            "recommendedAction": "Please try again or provide a clearer image.",
-            "confidence": 0
+            "response": "Sistem sedang mengalami gangguan teknis dalam memproses AI. Silakan coba beberapa saat lagi atau hubungi IT Support."
         }
