@@ -1,43 +1,95 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from src.services.rag_pipeline import chatbot
-import shutil
-import os
+import time
+import uuid
+from fastapi import FastAPI, Request, HTTPException, status
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from src.services.rag_pipeline import chatbot  # Asumsi core logic kamu
 
-app = FastAPI()
+app = FastAPI(title="SEJAHE AI Service", version="1.0.0")
 
-# Sama seperti di README: GET /api/health
-@app.get("/api/health")
-def health_check():
-    return {"status": "AI Service is running ✅", "service": "Python Gemini Vision + FAISS"}
+# --- 1. Request & Response Models sesuai Kontrak ---
 
-# Sama seperti di README: POST /api/analyze/combined
-@app.post("/api/analyze/combined")
-async def analyze_combined(
-    description: str = Form(None), 
-    image: UploadFile = File(None)
-):
-    image_path = None
+class RAGContext(BaseModel):
+    doc_id: str
+    title: str
+    similarity_score: float
+
+class ChatbotResponseData(BaseModel):
+    user_message_id: int
+    assistant_message_id: int
+    response: str
+    defect_category: Optional[str] = None
+    rag_context_used: List[RAGContext]
+    processing_time_ms: int
+
+class GlobalResponse(BaseModel):
+    success: bool
+    data: Optional[ChatbotResponseData] = None
+    message: str
+    request_id: str
+    error: Optional[dict] = None
+
+class QueryRequest(BaseModel):
+    chat_id: int = Field(..., description="ID sesi chat")
+    message: str = Field(..., min_length=1, max_length=2000)
+    image_key: Optional[str] = None
+    defect_category: Optional[str] = None
+
+# --- 2. Middleware untuk Request ID ---
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+# --- 3. Endpoint Utama: POST /api/v1/chatbot/query ---
+
+@app.post("/api/v1/chatbot/query", response_model=GlobalResponse)
+async def query_chatbot(request: QueryRequest, req_raw: Request):
+    start_time = time.time()
+    req_id = req_raw.headers.get("X-Request-ID", str(uuid.uuid4()))
     
-    # Simpan file gambar sementara
-    if image:
-        image_path = f"temp_{image.filename}"
-        with open(image_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-            
-    # Panggil pipeline chatbot kamu
-    analysis_result = chatbot(query_text=description, image_path=image_path)
-    
-    # Hapus gambar sementara
-    if image_path and os.path.exists(image_path):
-        os.remove(image_path)
+    try:
+        # Panggil otak RAG buatan Maulia
+        # Sesuai kontrak, proses ini harus 2-5 detik [cite: 981]
+        ai_result = chatbot(request.message, request.image_key)
         
-    return {
-        "success": True,
-        "analysis": analysis_result,
-        "message": "Defect analyzed successfully"
-    }
+        processing_time = int((time.time() - start_time) * 1000)
+        
+        # Susun data sesuai model 3.3 dan 6.0 di kontrak [cite: 848, 856]
+        data = ChatbotResponseData(
+            user_message_id=int(time.time()), # Dummy ID untuk contoh
+            assistant_message_id=int(time.time()) + 1,
+            response=ai_result["answer"],
+            defect_category=request.defect_category or "Printing Quality",
+            rag_context_used=[
+                RAGContext(
+                    doc_id=ctx["doc_id"], 
+                    title=ctx["title"], 
+                    similarity_score=ctx["score"]
+                ) for ctx in ai_result["context"]
+            ],
+            processing_time_ms=processing_time
+        )
+        
+        return GlobalResponse(
+            success=True,
+            data=data,
+            message="Operation successful",
+            request_id=req_id
+        )
 
-# Jalankan server (mirip dengan node src/index.js)
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    except Exception as e:
+        # Error handling sesuai Registry di kontrak (9.1) [cite: 962]
+        return GlobalResponse(
+            success=False,
+            message="Cloud AI service unreachable",
+            error={"code": "AI_SERVICE_UNAVAILABLE", "details": str(e)},
+            request_id=req_id
+        )
+
+# --- 4. Health Check Endpoint ---
+@app.get("/api/v1/health")
+async def health_check():
+    return {"status": "ok", "version": "v1.0"}
